@@ -248,6 +248,11 @@ private:
 	{
 		return x[i][(int)(x[j][0].value)].value;
 	}
+
+	double kernel_tstudent(int i,int j) const
+	{
+		return 1/(1+pow(sqrt(x_square[i]+x_square[j]-2*dot(x[i],x[j])),degree)) ;
+	}
 };
 
 Kernel::Kernel(int l, svm_node * const * x_, const svm_parameter& param)
@@ -271,11 +276,14 @@ Kernel::Kernel(int l, svm_node * const * x_, const svm_parameter& param)
 		case PRECOMPUTED:
 			kernel_function = &Kernel::kernel_precomputed;
 			break;
+		case TSTUDENT:
+			kernel_function = &Kernel::kernel_tstudent;
+			break;
 	}
 
 	clone(x,x_,l);
 
-	if(kernel_type == RBF)
+	if(kernel_type == RBF || kernel_type == TSTUDENT)
 	{
 		x_square = new double[l];
 		for(int i=0;i<l;i++)
@@ -367,6 +375,47 @@ double Kernel::k_function(const svm_node *x, const svm_node *y,
 			return tanh(param.gamma*dot(x,y)+param.coef0);
 		case PRECOMPUTED:  //x: test (validation), y: SV
 			return x[(int)(y->value)].value;
+		case TSTUDENT:
+		{
+			double sum = 0;
+			while(x->index != -1 && y->index !=-1)
+			{
+				if(x->index == y->index)
+				{
+					double d = x->value - y->value;
+					sum += d*d;
+					++x;
+					++y;
+				}
+				else
+				{
+					if(x->index > y->index)
+					{	
+						sum += y->value * y->value;
+						++y;
+					}
+					else
+					{
+						sum += x->value * x->value;
+						++x;
+					}
+				}
+			}
+
+			while(x->index != -1)
+			{
+				sum += x->value * x->value;
+				++x;
+			}
+
+			while(y->index != -1)
+			{
+				sum += y->value * y->value;
+				++y;
+			}
+			
+			return 1/(1+pow(sqrt(sum),param.degree));
+		}	
 		default:
 			return 0;  // Unreachable 
 	}
@@ -2641,7 +2690,7 @@ static const char *svm_type_table[] =
 
 static const char *kernel_type_table[]=
 {
-	"linear","polynomial","rbf","sigmoid","precomputed",NULL
+	"linear","polynomial","rbf","sigmoid","precomputed","tstudent",NULL
 };
 
 int svm_save_model(const char *model_file_name, const svm_model *model)
@@ -2660,7 +2709,7 @@ int svm_save_model(const char *model_file_name, const svm_model *model)
 	fprintf(fp,"svm_type %s\n", svm_type_table[param.svm_type]);
 	fprintf(fp,"kernel_type %s\n", kernel_type_table[param.kernel_type]);
 
-	if(param.kernel_type == POLY)
+	if(param.kernel_type == POLY || param.kernel_type == TSTUDENT)
 		fprintf(fp,"degree %d\n", param.degree);
 
 	if(param.kernel_type == POLY || param.kernel_type == RBF || param.kernel_type == SIGMOID)
@@ -3062,7 +3111,8 @@ const char *svm_check_parameter(const svm_problem *prob, const svm_parameter *pa
 	   kernel_type != POLY &&
 	   kernel_type != RBF &&
 	   kernel_type != SIGMOID &&
-	   kernel_type != PRECOMPUTED)
+	   kernel_type != PRECOMPUTED &&
+	   kernel_type != TSTUDENT)
 		return "unknown kernel type";
 
 	if(param->gamma < 0)
